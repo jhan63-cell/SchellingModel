@@ -13,6 +13,7 @@
 #include "repast_hpc/Random.h"
 #include <functional>
 #include "Model.h"
+#include <stdexcept>
 
 AgentPackageProvider::AgentPackageProvider(
     repast::SharedContext<Agent>* agentPtr)
@@ -24,14 +25,15 @@ void AgentPackageProvider::providePackage(
 
     repast::AgentId id = agent->getId();
 
-    AgentPackage package(
-        id.id(),
-        id.startingRank(),
-        id.agentType(),
-        id.currentRank(),
-        agent->getType(),
-        agent->getSatisfiedStatus()
-    );
+   AgentPackage package(
+    id.id(),
+    id.startingRank(),
+    id.agentType(),
+    id.currentRank(),
+    agent->getType(),
+    agent->getSatisfiedStatus(),
+    agent->getThreshold()
+);
 
     out.push_back(package);
 }
@@ -60,7 +62,12 @@ Agent* AgentPackageReceiver::createAgent(AgentPackage package) {
         package.currentRank
     );
 
-    return new Agent(id, package.agentType, package.isSatisfied);
+    return new Agent(
+    id,
+    package.agentType,
+    package.isSatisfied,
+    package.threshold
+);
 }
 
 void AgentPackageReceiver::updateAgent(AgentPackage package) {
@@ -167,200 +174,188 @@ SchellingModel::~SchellingModel(){
     delete receiver;
 }
 
-void SchellingModel::initAgents(){
-
+void SchellingModel::initAgents() {
     int rank = repast::RepastProcess::instance()->rank();
 
-double threshold =
-    repast::strToDouble(props->getProperty("threshold"));
+    int xMin = static_cast<int>(
+        discreteSpace->dimensions().origin().getX());
+    int yMin = static_cast<int>(
+        discreteSpace->dimensions().origin().getY());
 
-int x = 0;
-int y = 0;
+    int width = static_cast<int>(
+        discreteSpace->dimensions().extents().getX());
+    int height = static_cast<int>(
+        discreteSpace->dimensions().extents().getY());
 
-if (rank == 0) {
-    x = 1;
-    y = 2;
-} else if (rank == 1) {
-    x = 2;
-    y = 3;
-} else if (rank == 2) {
-    x = 4;
-    y = 2;
-} else if (rank == 3) {
-    x = 5;
-    y = 5;
-}
+    if (countOfAgents < 0 || countOfAgents >= width * height) {
+        throw std::runtime_error(
+            "Each partition must retain at least one empty cell");
+    }
 
-repast::AgentId id(0, rank, 0);
-id.currentRank(rank);
-
-Agent* agent = new Agent(id, 0, threshold);
-context.addAgent(agent);
-
-repast::Point<int> location(x, y);
-discreteSpace->moveTo(id, location);
-
-printf("Init: rank %d, agent at (%d,%d)\n", rank, x, y);
-
-/*
-    int rank = repast::RepastProcess::instance()->rank();
-
-    repast::IntUniformGenerator gen =
-        repast::Random::instance()
-            ->createUniIntGenerator(1, boardSize);
-
-    int countType0 = countOfAgents / 2;
-    int countType1 = countOfAgents - countType0;
+    auto genX = repast::Random::instance()
+        ->createUniIntGenerator(xMin, xMin + width - 1);
+    auto genY = repast::Random::instance()
+        ->createUniIntGenerator(yMin, yMin + height - 1);
 
     double threshold =
         repast::strToDouble(props->getProperty("threshold"));
 
-    for (int i = 0; i < countOfAgents; i++) {
-        int xRand, yRand;
-        std::vector<Agent*> agentList;
+    for (int i = 0; i < countOfAgents; ++i) {
+        int x, y;
+        std::vector<Agent*> occupants;
 
         do {
-            agentList.clear();
-            xRand = gen.next();
-            yRand = gen.next();
+            occupants.clear();
+            x = genX.next();
+            y = genY.next();
 
             discreteSpace->getObjectsAt(
-                repast::Point<int>(xRand, yRand),
-                agentList
-            );
-        } while (agentList.size() != 0);
+                repast::Point<int>(x, y), occupants);
+        } while (!occupants.empty());
 
-        repast::Point<int> initialLocation(xRand, yRand);
+        int type = i % 2;
 
         repast::AgentId id(i, rank, 0);
         id.currentRank(rank);
 
-        int type;
-        if (countType0 > 0) {
-            type = 0;
-            countType0--;
-        } else {
-            type = 1;
-            countType1--;
-        }
-
         Agent* agent = new Agent(id, type, threshold);
         context.addAgent(agent);
-        discreteSpace->moveTo(id, initialLocation);
-    }
-*/
-}
+        discreteSpace->moveTo(id, repast::Point<int>(x, y));
 
-void SchellingModel::doPerTick(){
-
-discreteSpace->balance();
-
-repast::RepastProcess::instance()->synchronizeAgentStatus<
-    Agent, AgentPackage,
-    AgentPackageProvider, AgentPackageReceiver
->(context, *provider, *receiver, *receiver);
-
-repast::RepastProcess::instance()->synchronizeProjectionInfo<
-    Agent, AgentPackage,
-    AgentPackageProvider, AgentPackageReceiver
->(context, *provider, *receiver, *receiver);
-
-repast::RepastProcess::instance()->synchronizeAgentStates<
-    AgentPackage, AgentPackageProvider, AgentPackageReceiver
->(*provider, *receiver);
-
-int rank = repast::RepastProcess::instance()->rank();
-
-double currentTick =
-    repast::RepastProcess::instance()
-        ->getScheduleRunner().currentTick();
-
-if (rank == 0) {
-    printf("Tick %.1f\n", currentTick);
-}
-
-if (rank == 0) {
-    printf("Rank 0 - LOCAL\n");
-
-    auto local = context.begin(repast::SharedContext<Agent>::LOCAL);
-    auto localEnd = context.end(repast::SharedContext<Agent>::LOCAL);
-
-    for (; local != localEnd; ++local) {
-        Agent* agent = &**local;
-        std::vector<int> loc;
-        discreteSpace->getLocation(agent->getId(), loc);
-
-        printf("Agent at (%d,%d), satisfied=%d\n",
-               loc[0], loc[1], agent->getSatisfiedStatus());
-    }
-
-    printf("Rank 0 - NON_LOCAL\n");
-
-    auto remote = context.begin(repast::SharedContext<Agent>::NON_LOCAL);
-    auto remoteEnd = context.end(repast::SharedContext<Agent>::NON_LOCAL);
-
-    for (; remote != remoteEnd; ++remote) {
-        Agent* agent = &**remote;
-        std::vector<int> loc;
-        discreteSpace->getLocation(agent->getId(), loc);
-
-        printf("Agent at (%d,%d), satisfied=%d\n",
-               loc[0], loc[1], agent->getSatisfiedStatus());
+        printf("Init: rank %d, type %d, at (%d,%d)\n",
+               rank, type, x, y);
     }
 }
 
-if (currentTick == 1 && rank == 0) {
-    repast::AgentId id(0, 0, 0);
 
-    std::vector<int> newLocation;
-    newLocation.push_back(0);
-    newLocation.push_back(3);
+void SchellingModel::doPerTick() {
+    boost::mpi::communicator world;
+    int rank = world.rank();
 
-    discreteSpace->moveTo(id, newLocation);
+    // 同步归属、空间副本和属性
+    auto synchronize = [&]() {
+        discreteSpace->balance();
+
+        repast::RepastProcess::instance()->synchronizeAgentStatus<
+            Agent, AgentPackage,
+            AgentPackageProvider, AgentPackageReceiver
+        >(context, *provider, *receiver, *receiver);
+
+        repast::RepastProcess::instance()->synchronizeProjectionInfo<
+            Agent, AgentPackage,
+            AgentPackageProvider, AgentPackageReceiver
+        >(context, *provider, *receiver, *receiver);
+
+        repast::RepastProcess::instance()->synchronizeAgentStates<
+            AgentPackage, AgentPackageProvider, AgentPackageReceiver
+        >(*provider, *receiver);
+    };
+
+    synchronize();
+
+    // 根据本轮开始时的邻居判断满意度
+    // 记录原有 Agent，避免迁移后在同一轮重复行动
+    std::vector<repast::AgentId> movers;
+
+    for (auto it = context.localBegin();
+         it != context.localEnd(); ++it) {
+        Agent* agent = &**it;
+        agent->updateStatus(&context, discreteSpace);
+
+        if (!agent->getSatisfiedStatus()) {
+            movers.push_back(agent->getId());
+        }
+    }
+
+    // 各进程依次移动，避免同时选中同一个空格
+    for (int turn = 0; turn < world.size(); ++turn) {
+        std::vector<int> localOccupied(boardSize * boardSize, 0);
+        std::vector<int> occupied(boardSize * boardSize, 0);
+
+        // 只统计 LOCAL，避免副本重复计数
+        for (auto it = context.localBegin();
+             it != context.localEnd(); ++it) {
+            Agent* agent = &**it;
+            std::vector<int> loc;
+            discreteSpace->getLocation(agent->getId(), loc);
+
+            int index = loc[1] * boardSize + loc[0];
+            localOccupied[index]++;
+        }
+
+        boost::mpi::all_reduce(
+            world,
+            localOccupied.data(),
+            static_cast<int>(localOccupied.size()),
+            occupied.data(),
+            std::plus<int>()
+        );
+
+        if (rank == turn) {
+            for (const auto& id : movers) {
+                Agent* agent = context.getAgent(id);
+                agent->move(discreteSpace, occupied, boardSize);
+            }
+        }
+
+        // 所有进程共同参与同步
+        synchronize();
+    }
+
+    std::vector<int> localCounts(boardSize * boardSize, 0);
+std::vector<int> globalCounts(boardSize * boardSize, 0);
+
+for (auto it = context.localBegin();
+     it != context.localEnd(); ++it) {
+    std::vector<int> loc;
+    discreteSpace->getLocation((*it)->getId(), loc);
+    localCounts[loc[1] * boardSize + loc[0]]++;
 }
 
-/*
-	double avgSatisfied = 0;
-std::vector<Agent*> agents;
-
-context.selectAgents(
-    repast::SharedContext<Agent>::LOCAL,
-    countOfAgents,
-    agents
+boost::mpi::all_reduce(
+    world,
+    localCounts.data(),
+    static_cast<int>(localCounts.size()),
+    globalCounts.data(),
+    std::plus<int>()
 );
 
-std::vector<Agent*>::iterator it = agents.begin();
+int total = 0;
+bool overlap = false;
 
-while (it != agents.end()) {
-    (*it)->updateStatus(&context, discreteSpace);
-    avgSatisfied += (*it)->getSatisfiedStatus();
-    it++;
-}
-
-avgSatisfied /= countOfAgents;
-
-double currentTick =
-    repast::RepastProcess::instance()
-        ->getScheduleRunner().currentTick();
-
-if (repast::RepastProcess::instance()->rank() == 0) {
-    printf("Tick: %.1f\tAvg satisfied: %.2f\n",
-           currentTick, avgSatisfied);
-
-    if (currentTick == 1 || currentTick == stopAt)
-        printToScreen();
-}
-
-it = agents.begin();
-
-while (it != agents.end()) {
-    if (!(*it)->getSatisfiedStatus()) {
-        (*it)->move(discreteSpace);
+for (int count : globalCounts) {
+    total += count;
+    if (count > 1) {
+        overlap = true;
     }
-    it++;
 }
-*/
 
+if (total != countOfAgents * world.size() || overlap) {
+    throw std::runtime_error(
+        "Agent count changed or multiple agents occupy one cell");
+}
+
+if (rank == 0) {
+    printf("Check: agents=%d, overlap=0\n", total);
+}
+
+    // 按移动后的空间重新计算满意度，供 CSV 统计
+    for (auto it = context.localBegin();
+         it != context.localEnd(); ++it) {
+        Agent* agent = &**it;
+        agent->updateStatus(&context, discreteSpace);
+    }
+
+    repast::RepastProcess::instance()->synchronizeAgentStates<
+        AgentPackage, AgentPackageProvider, AgentPackageReceiver
+    >(*provider, *receiver);
+
+    if (rank == 0) {
+        double tick = repast::RepastProcess::instance()
+            ->getScheduleRunner().currentTick();
+
+        printf("Tick %.0f completed\n", tick);
+    }
 }
 
 void SchellingModel::initSchedule(repast::ScheduleRunner& runner){

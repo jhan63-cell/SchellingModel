@@ -1,6 +1,6 @@
 random.seed = 1
-stop.at = 2
-count.of.agents = 1
+stop.at = 20
+count.of.agents = 6
 threshold = 0.3
 
 board.size = 6

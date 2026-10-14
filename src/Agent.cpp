@@ -8,9 +8,10 @@ Agent::Agent(repast::AgentId id, int type, double threshold)
       isSatisfied(false), threshold(threshold) {
 }
 
-Agent::Agent(repast::AgentId id, int type, bool satisfied)
+Agent::Agent(repast::AgentId id, int type,
+             bool satisfied, double threshold)
     : agentId(id), agentType(type),
-      isSatisfied(satisfied), threshold(0.3) {
+      isSatisfied(satisfied), threshold(threshold) {
 }
 
 void Agent::set(int currentRank, int newType,
@@ -49,48 +50,54 @@ while (tempAgent != neighbourAgents.end()) {
 }
 
 // 判断同类比例是否达到满意阈值
-isSatisfied =
-    ((double)similarCount / neighbourAgents.size() >= threshold);
+if (neighbourAgents.empty()) {
+    isSatisfied = true;
+} else {
+    double similarRatio =
+        static_cast<double>(similarCount) / neighbourAgents.size();
+
+    isSatisfied = (similarRatio >= threshold);
+}
 }
 
-void Agent::move(repast::SharedDiscreteSpace<Agent, repast::StrictBorders, repast::SimpleAdder<Agent> >* space){
-	// 获取当前坐标
-std::vector<int> agentLoc;
-space->getLocation(agentId, agentLoc);
+void Agent::move(
+    repast::SharedDiscreteSpace<
+        Agent, repast::StrictBorders,
+        repast::SimpleAdder<Agent>
+    >* space,
+    std::vector<int>& occupied,
+    int boardSize) {
 
-// 创建随机坐标生成器
-int xMax = (int)space->bounds().extents(0) - 1;
+    std::vector<int> emptyCells;
 
-repast::IntUniformGenerator gen =
-    repast::Random::instance()->createUniIntGenerator(1, xMax);
+    for (int i = 0; i < boardSize * boardSize; ++i) {
+        if (occupied[i] == 0) {
+            emptyCells.push_back(i);
+        }
+    }
 
-std::vector<int> agentNewLoc;
+    if (emptyCells.empty()) {
+        return;
+    }
 
-do {
-    agentNewLoc.clear();
+    auto gen = repast::Random::instance()
+        ->createUniIntGenerator(
+            0, static_cast<int>(emptyCells.size()) - 1);
 
-    int xRand, yRand;
-    std::vector<Agent*> agentList;
+    int target = emptyCells[gen.next()];
+    int x = target % boardSize;
+    int y = target / boardSize;
 
-    // 持续抽取坐标，直到找到空位置
-    do {
-        agentList.clear();
-        xRand = gen.next();
-        yRand = gen.next();
+    std::vector<int> oldLocation;
+    space->getLocation(agentId, oldLocation);
 
-        space->getObjectsAt(
-            repast::Point<int>(xRand, yRand),
-            agentList
-        );
-    } while (agentList.size() != 0);
+    space->moveTo(agentId, repast::Point<int>(x, y));
 
-    agentNewLoc.push_back(xRand);
-    agentNewLoc.push_back(yRand);
+    int oldIndex =
+        oldLocation[1] * boardSize + oldLocation[0];
 
-} while (!space->bounds().contains(agentNewLoc));
-
-// 移动到新位置
-space->moveTo(agentId, agentNewLoc);
+    occupied[oldIndex] = 0;
+    occupied[target] = 1;
 }
 
 AgentPackage::AgentPackage() {
@@ -99,11 +106,12 @@ AgentPackage::AgentPackage() {
 AgentPackage::AgentPackage(
     int _id, int _rank, int _type,
     int _currentRank, int _agentType,
-    bool _isSatisfied)
+    bool _isSatisfied, double _threshold)
     : id(_id),
       rank(_rank),
       type(_type),
       currentRank(_currentRank),
       agentType(_agentType),
-      isSatisfied(_isSatisfied) {
+      isSatisfied(_isSatisfied),
+      threshold(_threshold) {
 }

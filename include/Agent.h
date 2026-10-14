@@ -4,6 +4,7 @@
 #include "repast_hpc/AgentId.h"
 #include "repast_hpc/SharedContext.h"
 #include "repast_hpc/SharedDiscreteSpace.h"
+#include <vector>
 
 
 class Agent{
@@ -16,7 +17,8 @@ private:
 	
 public:
 	Agent(repast::AgentId id, int agentType, double threshold); //for init
-	Agent(repast::AgentId id, int agentType, bool isSatisfied);
+	Agent(repast::AgentId id, int agentType,
+      bool isSatisfied, double threshold);
 	~Agent();
 	
 	/* Required Getters */
@@ -26,13 +28,20 @@ public:
 	/* Getters specific to this kind of Agent */
 	int getType() { return agentType; }
 	bool getSatisfiedStatus() { return isSatisfied; }
+    double getThreshold() const { return threshold; }
 
 	void set(int currentRank, int newType, bool newSatisfiedStatus);
 	
 	/* Actions */
 	void updateStatus(repast::SharedContext<Agent>* context,
 			  repast::SharedDiscreteSpace<Agent, repast::StrictBorders, repast::SimpleAdder<Agent> >* space);
-	void move(repast::SharedDiscreteSpace<Agent, repast::StrictBorders, repast::SimpleAdder<Agent> >* space);	
+	void move(
+    repast::SharedDiscreteSpace<
+        Agent, repast::StrictBorders,
+        repast::SimpleAdder<Agent>
+    >* space,
+    std::vector<int>& occupied,
+    int boardSize);	
 };
 
 struct AgentPackage {
@@ -42,12 +51,13 @@ struct AgentPackage {
     int currentRank;
     int agentType;
     bool isSatisfied;
+    double threshold;
 
     AgentPackage();
 
     AgentPackage(int _id, int _rank, int _type,
-                 int _currentRank, int _agentType,
-                 bool _isSatisfied);
+             int _currentRank, int _agentType,
+             bool _isSatisfied, double _threshold);
 
     template<class Archive>
     void serialize(Archive& ar, const unsigned int version) {
@@ -57,6 +67,7 @@ struct AgentPackage {
         ar & currentRank;
         ar & agentType;
         ar & isSatisfied;
+        ar & threshold;
     }
 };
 
